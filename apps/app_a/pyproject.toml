@@ -1,0 +1,13 @@
+[project]
+name = "app_a"
+version = "0.0.1"
+
+[project.scripts]
+app_a = "app_a.cli:app"
+
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app_a*"]

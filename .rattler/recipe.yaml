@@ -1,0 +1,163 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/prefix-dev/recipe-format/main/schema.json
+
+context:
+  name: nmlib
+  build_number: 0
+
+recipe:
+  name: nmlib-split
+
+source:
+  - path: ..
+    use_gitignore: true
+
+build:
+  number: ${{ build_number }}
+
+outputs:
+  ################################################################################################
+  # nm_a
+  - package:
+      name: ${{ load_from_file("libs/nm_a/pyproject.toml").project.name }}
+      version: ${{ load_from_file("libs/nm_a/pyproject.toml").project.version }}
+    build:
+      noarch: python
+      script: |
+        cd libs/nm_a
+        python -m pip install . --no-deps --ignore-installed --no-build-isolation
+    requirements:
+      host:
+        - pip
+        - setuptools
+    tests:
+      - script: |
+          ls -lhF
+          pytest -vvs libs/nm_a/tests
+        files:
+          source:
+            - libs/nm_a/pyproject.toml
+            - libs/nm_a/tests/
+        requirements:
+          run:
+            - pytest
+
+  ################################################################################################
+  # nm_b
+  - package:
+      name: ${{ load_from_file("libs/nm_b/pyproject.toml").project.name }}
+      version: ${{ load_from_file("libs/nm_b/pyproject.toml").project.version }}
+    build:
+      noarch: python
+      script: |
+        cd libs/nm_b
+        python -m pip install . --no-deps --ignore-installed --no-build-isolation
+    requirements:
+      host:
+        - pip
+        - setuptools
+      run:
+        - ${{ pin_subpackage('nm_a') }}
+    tests:
+      - script:
+          - pytest -vvs libs/nm_b/tests
+        files:
+          source:
+            - libs/nm_b/pyproject.toml
+            - libs/nm_b/tests/
+        requirements:
+          run:
+            - pytest
+
+  ################################################################################################
+  # nm_c
+  - package:
+      name: ${{ load_from_file("libs/nm_c/pyproject.toml").project.name }}
+      version: ${{ load_from_file("libs/nm_c/pyproject.toml").project.version }}
+    build:
+      script: |
+        export PYTHONDONTWRITEBYTECODE=1
+        cd libs/nm_c
+        python -m pip install . --no-deps --ignore-installed --no-build-isolation
+    requirements:
+      build:
+        - ${{ compiler('cxx') }}
+        - cmake >=3.15
+        - ninja
+      host:
+        - pip
+        - setuptools
+        - scikit-build-core
+        - pybind11
+        - numpy
+      run:
+        - ${{ pin_compatible('numpy') }}
+        - ${{ pin_subpackage('nm_a') }}
+    tests:
+      - script:
+          - pytest -vvs libs/nm_c/tests
+        files:
+          source:
+            - libs/nm_c/pyproject.toml
+            - libs/nm_c/tests/
+        requirements:
+          run:
+            - pytest
+
+  ################################################################################################
+  # app_a
+  - package:
+      name: ${{ load_from_file("apps/app_a/pyproject.toml").project.name }}
+      version: ${{ load_from_file("apps/app_a/pyproject.toml").project.version }}
+    build:
+      noarch: python
+      script: |
+        cd apps/app_a
+        python -m pip install . --no-deps --ignore-installed --no-build-isolation
+    requirements:
+      host:
+        - pip
+        - setuptools
+      run:
+        - typer
+        - ${{ pin_subpackage('nm_a') }}
+    tests:
+      - script:
+          - app_a --help
+          - pytest -vvs apps/app_a/tests
+        files:
+          source:
+            - apps/app_a/pyproject.toml
+            - apps/app_a/tests/
+        requirements:
+          run:
+            - pytest
+
+  ################################################################################################
+  # app_b
+  - package:
+      name: ${{ load_from_file("apps/app_b/pyproject.toml").project.name }}
+      version: ${{ load_from_file("apps/app_b/pyproject.toml").project.version }}
+    build:
+      noarch: python
+      script: |
+        cd apps/app_b
+        python -m pip install . --no-deps --ignore-installed --no-build-isolation
+    requirements:
+      host:
+        - pip
+        - setuptools
+      run:
+        - typer
+        - ${{ pin_subpackage('nm_b') }}
+        - ${{ pin_subpackage('nm_c') }}
+    tests:
+      - script:
+          - app_b --help
+          - pytest -vvs apps/app_b/tests
+        files:
+          source:
+            - apps/app_b/pyproject.toml
+            - apps/app_b/tests/
+        requirements:
+          run:
+            - pytest
