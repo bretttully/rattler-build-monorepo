@@ -1,0 +1,48 @@
+[project]
+name = "nm_c"
+version = "0.0.1"
+
+[build-system]
+requires = ["scikit-build-core"]
+build-backend = "scikit_build_core.build"
+
+[tool.setuptools.packages.find]
+include = ["nm_c*", "libnm_c*"]
+
+[tool.scikit-build]
+cmake.minimum-version = "3.15"
+cmake.verbose = true
+cmake.build-type = "Release"
+
+[tool.scikit-build.cmake.define]
+BUILD_SHARED_LIBS = "ON"
+CMAKE_POSITION_INDEPENDENT_CODE = "ON"
+PYTHON_BYTECODE = "OFF"
+PYTHON_BYTECODE_COMPILEALL = "OFF"
+
+# Control what goes into the wheel
+[tool.scikit-build.wheel]
+#packages = ["nm_c*", "libnm_c*"]
+exclude = [
+    "**/__pycache__",
+    "**/*.py[cod]",
+    "**/*.so.d",
+    "**/*.cpp",
+    "**/*.h",
+    "**/CMakeFiles",
+    "**/CMakeCache.txt",
+    "**/Makefile",
+    "**/*.cmake"
+]
+
+## Source distribution configuration
+#[tool.scikit-build.sdist]
+#include = [
+#    "src/**/*.cpp",
+#    "src/**/*.hpp",
+#    "CMakeLists.txt"
+#]
+#exclude = [
+#    "build/*",
+#    "**/__pycache__"
+#]
