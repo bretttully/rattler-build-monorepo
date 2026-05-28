@@ -34,8 +34,17 @@ channels = ["https://prefix.dev/pixi-build-backends", "https://prefix.dev/conda-
 platforms = ["linux-64", "osx-arm64"]
 preview = ["pixi-build"]
 
+# Centralised dep versions inherited via `{ workspace = true }` in sub-packages.
+# Requires pixi from main (the v0.69 release does not yet ship this table).
+[workspace.dependencies]
+python = "3.12.*"
+maturin = ">=1.7,<2.0"
+hatchling = "*"
+typer = "*"
+
 [dependencies]
-# Top-of-graph apps pull every leaf transitively.
+# Top-of-graph apps pull every leaf transitively. Source paths go directly here —
+# `{ workspace = true }` is only valid in sub-package [tool.pixi.package.*] blocks.
 cli_simple = { path = "apps/cli_simple" }
 cli_full = { path = "apps/cli_full" }
 # Workspace tooling not provided by any source package.
@@ -87,14 +96,14 @@ name = "pixi-build-python"
 version = "0.4.*"
 
 [tool.pixi.package.host-dependencies]
-maturin = ">=1.7,<2.0"
-python = "3.12.*"
+maturin = { workspace = true }
+python = { workspace = true }
 
 [tool.pixi.package.run-dependencies]
-python = "3.12.*"
+python = { workspace = true }
 ```
 
-`pixi-build-python` reads the standard PEP 517 `[build-system]` block, detects maturin, and provisions the rust toolchain automatically. No explicit `compilers = ["rust"]` field is needed.
+`pixi-build-python` reads the standard PEP 517 `[build-system]` block, detects maturin, and provisions the rust toolchain automatically. No explicit `compilers = ["rust"]` field is needed. The `{ workspace = true }` references inherit pins from the root `[workspace.dependencies]` table.
 
 ### PyO3 cdylib — `python/fastthing/Cargo.toml`
 
@@ -132,15 +141,15 @@ name = "pixi-build-python"
 version = "0.4.*"
 
 [tool.pixi.package.host-dependencies]
-hatchling = "*"
-python = "3.12.*"
+hatchling = { workspace = true }
+python = { workspace = true }
 
 [tool.pixi.package.run-dependencies]
-python = "3.12.*"
+python = { workspace = true }
 fastthing = { path = "../../python/fastthing" }
 ```
 
-Cross-package source deps go in `[tool.pixi.package.run-dependencies]` using `path = "..."`. Same pattern works for apps depending on libs, and libs depending on multiple PyO3 packages (`libs/geoanalysis` in this repo depends on both `fastthing` and `geocompute`).
+Named external deps (python, hatchling, maturin, typer…) use `{ workspace = true }` to inherit pins from `[workspace.dependencies]`. Source-package deps use `{ path = "..." }` directly — they are *not* declared in `[workspace.dependencies]`. Same pattern works for apps depending on libs, and libs depending on multiple PyO3 packages (`libs/geoanalysis` in this repo depends on both `fastthing` and `geocompute`).
 
 ## Two-workspace split — when (if ever) to reach for it
 
@@ -182,10 +191,11 @@ Sub-crate `Cargo.toml` files reference cross-workspace pure-Rust crates by relat
 
 | Gotcha | Workaround |
 |---|---|
-| **`[workspace.dependencies]` rejected on pixi 0.69**, even though the canonical `polyglot-particles` example in `prefix-dev/pixi/examples/pixi-build/polyglot-particles` uses it. `{ workspace = true }` in sub-packages fails the same way. | Inline pins on each sub-package (`python = "3.12.*"`, `maturin = ">=1.7,<2.0"`). Re-evaluate when pixi releases the next minor with `[workspace.dependencies]` support. |
+| **`[workspace.dependencies]` and `{ workspace = true }` need pixi >= main (post-v0.69)**. The v0.69 release rejects both — the canonical `polyglot-particles` example uses them but builds against unreleased pixi. | Pin pixi to a specific successful CI run on `prefix-dev/pixi` main: download the `pixi-<platform>-<sha>` artifact (which bundles the binary + every `pixi-build-*` backend) and add it to PATH. Re-evaluate when pixi v0.70 ships. The CI workflow in this repo demonstrates the pattern. |
+| **`{ workspace = true }` only works in sub-package `[tool.pixi.package.*-dependencies]`.** Trying it in the root `[dependencies]` block (for top-of-graph apps) is rejected. | At the root, declare top-of-graph apps with `{ path = "..." }` directly. `[workspace.dependencies]` is purely for the inheritance pattern in sub-packages, not for the root's own dep list. |
 | **Same-name `tests/` directories across sub-packages** collide under default pytest import mode (`ModuleNotFoundError: No module named 'tests.test_cli'`). | Add `--import-mode=importlib` to the pytest invocation and don't put `__init__.py` files in the `tests/` directories. |
 | **Single-command Typer apps collapse to direct invocation**, so `cli-foo subcmd args` parses `subcmd` as the function's first positional argument. | Add an empty `@app.callback()` to force subcommand mode, or register a second `@app.command()`. |
-| **`pixi self-update`** errors on a conda-installed pixi binary. | Install the latest pixi to `~/.pixi/bin` via the official `https://pixi.sh/install.sh` script. Add to PATH before the conda-managed copy. |
+| **`pixi self-update`** errors on a conda-installed pixi binary. | Install pixi to `~/.pixi/bin` via the official `https://pixi.sh/install.sh` script, or download a specific CI artifact for the bleeding edge. |
 
 ## Recommended migration order (for porting this into a real monorepo)
 
@@ -207,8 +217,8 @@ Sub-crate `Cargo.toml` files reference cross-workspace pure-Rust crates by relat
 
 For reproducibility:
 
-- pixi ≥ 0.69 (preview feature `pixi-build`)
-- `pixi-build-python` 0.4.*
+- pixi: **bleeding edge** from `prefix-dev/pixi` main. Pinned in CI to a specific commit + build.yml run ID; the CI artifact bundles the `pixi` binary plus every `pixi-build-*` backend. Downgrade to `latest` release when pixi v0.70 lands (which is expected to ship `[workspace.dependencies]` + `{ workspace = true }`).
+- `pixi-build-python` 0.4.* (provided by the bundled backend)
 - maturin ≥ 1.7, < 2.0
 - pyo3 0.22
 - python 3.12.*

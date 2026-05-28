@@ -1,0 +1,38 @@
+name: Install pixi nightly
+description: |
+  Download a pinned pixi binary + pixi-build-* backends from a successful
+  prefix-dev/pixi CI run, chmod them, and prepend to PATH. Used until the
+  unreleased pixi features (`[workspace.dependencies]`, `{ workspace = true }`)
+  ship in a tagged release.
+
+inputs:
+  github-token:
+    description: |
+      GitHub token with `actions: read` permission for cross-repo artifact
+      download from prefix-dev/pixi. The workflow's GITHUB_TOKEN is sufficient
+      when the workflow declares `permissions: actions: read`.
+    required: true
+  pixi-commit:
+    description: Commit SHA on prefix-dev/pixi main that built the artifact.
+    required: true
+  pixi-run-id:
+    description: GitHub Actions run ID on prefix-dev/pixi that produced the artifact.
+    required: true
+  pixi-platform:
+    description: Artifact platform suffix (e.g. linux-x86_64, macos-aarch64).
+    default: linux-x86_64
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/download-artifact@v4
+      with:
+        repository: prefix-dev/pixi
+        run-id: ${{ inputs.pixi-run-id }}
+        github-token: ${{ inputs.github-token }}
+        name: pixi-${{ inputs.pixi-platform }}-${{ inputs.pixi-commit }}
+        path: ./pixi-bin
+    - shell: bash
+      run: |
+        chmod +x ./pixi-bin/pixi ./pixi-bin/pixi-build-*
+        echo "$PWD/pixi-bin" >> "$GITHUB_PATH"

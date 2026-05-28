@@ -1,8 +1,9 @@
 name: CI
 
 # Lint, tests, demos, and per-package conda builds all run in parallel.
-# Most jobs share a pixi env cache; the build-conda matrix builds each
-# .conda artifact independently and uploads it.
+# Each job installs pixi from a pinned `prefix-dev/pixi` CI artifact so that
+# `[workspace.dependencies]` and `{ workspace = true }` (unreleased pixi
+# features) work. Re-evaluate when pixi v0.70 ships.
 
 on:
   push:
@@ -11,12 +12,44 @@ on:
 
 permissions:
   contents: read
+  actions: read  # required for actions/download-artifact cross-repo
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Pin to a specific successful CI run on prefix-dev/pixi main. The artifact
+  # contains `pixi` plus every `pixi-build-*` backend prebuilt for the platform.
+  PIXI_COMMIT: c8e91984125064b8e96c228f63ec757b4e2f86f9
+  PIXI_RUN_ID: "26451846517"
+
 jobs:
+  # ---------------------------------------------------------------------------
+  # Single setup job: install pixi nightly and discover the source packages by
+  # reading the lockfile. The package list becomes the build matrix below — no
+  # hardcoded list of paths, the matrix is derived from pixi itself.
+  # ---------------------------------------------------------------------------
+
+  discover:
+    name: Discover source packages
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-pixi-nightly
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
+      - id: list
+        run: |
+          packages=$(pixi list --frozen --json \
+            | jq -c '[.[] | select(.source != null and (.source | startswith("http") | not)) | {name, path: .source}]')
+          echo "Detected source packages: $packages"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
   # ---------------------------------------------------------------------------
   # Top-level verification jobs — independent, run in parallel.
   # ---------------------------------------------------------------------------
@@ -26,9 +59,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.4
+      - uses: ./.github/actions/install-pixi-nightly
         with:
-          cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
       - run: pixi run lint
 
   python-tests:
@@ -36,9 +71,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.4
+      - uses: ./.github/actions/install-pixi-nightly
         with:
-          cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
       - run: pixi run test
 
   rust-tests:
@@ -46,9 +83,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.4
+      - uses: ./.github/actions/install-pixi-nightly
         with:
-          cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
       - run: pixi run test-rust
 
   demos:
@@ -56,38 +95,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.4
+      - uses: ./.github/actions/install-pixi-nightly
         with:
-          cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
       - run: pixi run demo-simple
       - run: pixi run demo-full
 
   # ---------------------------------------------------------------------------
-  # Per-package conda build — matrix runs in parallel, one job per package.
-  # Mirrors the release-time pattern of large rust+pyo3 monorepos: each source
-  # package's .conda artifact is built independently and uploaded so a release
-  # workflow can publish them as a set.
+  # Per-package conda build — matrix is generated from the `discover` job, so
+  # adding/removing source packages updates CI automatically with no workflow
+  # edit. Each job builds one `.conda` artifact in parallel.
   # ---------------------------------------------------------------------------
 
   build-conda:
     name: Build ${{ matrix.package.name }}
+    needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        package:
-          - { name: fastthing,   path: python/fastthing }
-          - { name: geocompute,  path: python/geocompute }
-          - { name: slowthing,   path: libs/slowthing }
-          - { name: geoanalysis, path: libs/geoanalysis }
-          - { name: cli_simple,  path: apps/cli_simple }
-          - { name: cli_full,    path: apps/cli_full }
+        package: ${{ fromJSON(needs.discover.outputs.packages) }}
     steps:
       - uses: actions/checkout@v6
-      - uses: prefix-dev/setup-pixi@v0.9.4
+      - uses: ./.github/actions/install-pixi-nightly
         with:
-          cache: true
-          run-install: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
       - name: Build ${{ matrix.package.name }} conda package
         run: pixi build --path ${{ matrix.package.path }} --output-dir conda-out
       - name: Upload .conda artifact
@@ -99,16 +135,14 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------------
-  # Aggregate gate — single required check that succeeds when every parallel
-  # job above has succeeded. Branch protection should require only `ci-success`
-  # rather than enumerating individual jobs.
+  # Aggregate gate — branch protection should require this single check.
   # ---------------------------------------------------------------------------
 
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, python-tests, rust-tests, demos, build-conda]
+    needs: [discover, lint, python-tests, rust-tests, demos, build-conda]
     steps:
       - name: Check upstream jobs
         run: |

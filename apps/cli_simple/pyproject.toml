@@ -17,10 +17,10 @@ name = "pixi-build-python"
 version = "0.4.*"
 
 [tool.pixi.package.host-dependencies]
-hatchling = "*"
-python = "3.12.*"
+hatchling = { workspace = true }
+python = { workspace = true }
 
 [tool.pixi.package.run-dependencies]
-python = "3.12.*"
+python = { workspace = true }
 slowthing = { path = "../../libs/slowthing" }
-typer = "*"
+typer = { workspace = true }
