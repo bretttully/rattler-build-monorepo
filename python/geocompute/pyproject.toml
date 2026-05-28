@@ -1,0 +1,25 @@
+[build-system]
+build-backend = "maturin"
+requires = ["maturin>=1.7,<2.0"]
+
+[project]
+name = "geocompute"
+description = "PyO3 cdylib exposing geocompute-core + geocompute-tiles to Python."
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "geocompute"
+
+[tool.pixi.package.build.backend]
+channels = ["https://prefix.dev/pixi-build-backends", "https://prefix.dev/conda-forge"]
+name = "pixi-build-python"
+version = "0.4.*"
+
+[tool.pixi.package.host-dependencies]
+maturin = { workspace = true }
+python = { workspace = true }
+
+[tool.pixi.package.run-dependencies]
+python = { workspace = true }

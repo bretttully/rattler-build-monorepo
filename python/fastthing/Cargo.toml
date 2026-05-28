@@ -1,0 +1,15 @@
+[package]
+name = "fastthing"
+description = "PyO3 cdylib exposing fastthing-core + fastthing-stats to Python."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "fastthing"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+fastthing-core = { path = "../../rust/fastthing-core" }
+fastthing-stats = { path = "../../rust/fastthing-stats" }

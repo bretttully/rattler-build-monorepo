@@ -1,0 +1,9 @@
+[package]
+name = "fastthing-core"
+description = "Pure-Rust sum logic used by the fastthing PyO3 extension."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "fastthing_core"

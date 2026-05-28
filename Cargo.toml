@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "rust/fastthing-core",
+    "rust/fastthing-stats",
+    "rust/geocompute-core",
+    "rust/geocompute-tiles",
+    "python/fastthing",
+    "python/geocompute",
+]
+resolver = "2"

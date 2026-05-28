@@ -1,0 +1,9 @@
+# Ruff config at the workspace root so the lint task behaves identically
+# everywhere (local dev, CI). Without this, ruff falls back to its built-in
+# defaults — which differ from common monorepo conventions and produce
+# divergent results between users with a personal ~/.config/ruff/pyproject.toml
+# and a fresh CI runner.
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

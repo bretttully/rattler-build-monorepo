@@ -1,0 +1,12 @@
+[package]
+name = "fastthing-stats"
+description = "Statistics built on fastthing-core."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "fastthing_stats"
+
+[dependencies]
+fastthing-core = { path = "../fastthing-core" }

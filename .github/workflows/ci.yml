@@ -1,0 +1,259 @@
+name: CI
+
+# Stage A — fast, source-only checks (lint, rust unit tests) run in parallel
+#           with stage B's build phase.
+# Stage B — per-package conda builds (matrix), then a single channel index,
+#           then per-package conda-install + test (matrix). This catches
+#           missing recipe dep declarations: a package whose `import X` is
+#           satisfied by its editable install will still fail here if its
+#           recipe forgot to declare `X` as a run-dependency.
+# Stage C — aggregate gate.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  actions: read  # required for actions/download-artifact cross-repo
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin to a specific successful CI run on prefix-dev/pixi main. The artifact
+  # contains `pixi` plus every `pixi-build-*` backend prebuilt for the platform.
+  PIXI_COMMIT: c8e91984125064b8e96c228f63ec757b4e2f86f9
+  PIXI_RUN_ID: "26451846517"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Discover the source packages by reading pixi's view of the lockfile. The
+  # output drives both build-conda and test-package matrices, so adding /
+  # removing a source package updates CI without a workflow edit.
+  # ---------------------------------------------------------------------------
+
+  discover:
+    name: Discover source packages
+    runs-on: ubuntu-latest
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-pixi-nightly
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
+      - id: list
+        run: |
+          packages=$(pixi list --frozen --json \
+            | jq -c '[.[] | select(.source != null and (.source | startswith("http") | not)) | {name, path: .source}]')
+          echo "Detected source packages: $packages"
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # Source-only checks — run in parallel with everything below.
+  # ---------------------------------------------------------------------------
+
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-pixi-nightly
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
+      - run: pixi run lint
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-pixi-nightly
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
+      - run: pixi run test-rust
+
+  # ---------------------------------------------------------------------------
+  # Per-package conda build — matrix is generated from `discover`, runs in
+  # parallel. Each job builds ONE .conda artifact and uploads it. Adding /
+  # removing a source package updates the matrix automatically.
+  # ---------------------------------------------------------------------------
+
+  build-conda:
+    name: Build ${{ matrix.package.name }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.discover.outputs.packages) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/install-pixi-nightly
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
+      - name: Build ${{ matrix.package.name }}
+        run: pixi build --path ${{ matrix.package.path }} --output-dir conda-tmp
+      - name: Sort .conda into channel layout
+        run: |
+          mkdir -p conda-out/noarch conda-out/linux-64
+          for f in conda-tmp/*.conda; do
+            # Noarch builds have a `pyh<hash>` build string (e.g. *-pyh4616a5c_0.conda).
+            # Everything else is platform-specific; this workflow only builds for linux-64.
+            if [[ "$f" == *-pyh*_*.conda ]]; then
+              mv "$f" conda-out/noarch/
+            else
+              mv "$f" conda-out/linux-64/
+            fi
+          done
+          find conda-out -type f
+      - uses: actions/upload-artifact@v7
+        with:
+          name: conda-${{ matrix.package.name }}
+          path: conda-out
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Aggregate the per-package artifacts into a single conda channel that the
+  # downstream test jobs can solve against. `rattler-index` writes the
+  # repodata.json so that micromamba can use the directory as a real channel.
+  # ---------------------------------------------------------------------------
+
+  channel:
+    name: Index conda channel
+    needs: build-conda
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: conda-*
+          path: ./channel
+          merge-multiple: true
+      - uses: ./.github/actions/install-pixi-nightly
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pixi-commit: ${{ env.PIXI_COMMIT }}
+          pixi-run-id: ${{ env.PIXI_RUN_ID }}
+      - name: Build channel index
+        # `pixi exec` runs rattler-index in a one-off conda env without leaving
+        # global state behind (and without needing `~/.pixi/bin` on PATH).
+        run: pixi exec rattler-index fs ./channel
+      - name: Show channel layout
+        run: find ./channel -type f | head -40
+      - uses: actions/upload-artifact@v7
+        with:
+          name: conda-channel
+          path: ./channel
+          if-no-files-found: error
+          retention-days: 14
+
+  # ---------------------------------------------------------------------------
+  # Per-package install + test — matrix runs in parallel. For each package the
+  # conda solver installs THAT package only from the local channel; transitive
+  # deps come along via the recipe's declared dependencies. A missing dep
+  # declaration that the editable-install pattern would mask gets caught here.
+  # ---------------------------------------------------------------------------
+
+  test-package:
+    name: Test ${{ matrix.package.name }}
+    needs: [discover, channel]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.discover.outputs.packages) }}
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: conda-channel
+          path: ./channel
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: ${{ matrix.package.name }}-test
+          create-args: >-
+            --channel ./channel
+            --channel conda-forge
+            python=3.12
+            pytest
+            ${{ matrix.package.name }}
+          init-shell: bash
+          generate-run-shell: true
+      - name: Smoke import
+        run: python -c "import ${{ matrix.package.name }}; print('imported ${{ matrix.package.name }} OK')"
+      - name: Run package tests (if present)
+        run: |
+          TEST_DIR="${{ matrix.package.path }}/tests"
+          if [ -d "$TEST_DIR" ]; then
+            pytest "$TEST_DIR" --import-mode=importlib
+          else
+            echo "No tests/ dir for ${{ matrix.package.name }} — smoke import only."
+          fi
+
+  # ---------------------------------------------------------------------------
+  # Demo CLIs — installs both apps from the channel and exercises them. Catches
+  # entry-point / CLI plumbing issues that the per-package tests don't (those
+  # use the Typer test runner, not the installed `cli-simple` / `cli-full`
+  # console scripts).
+  # ---------------------------------------------------------------------------
+
+  demos:
+    name: Demo CLIs
+    needs: channel
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: conda-channel
+          path: ./channel
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: demos
+          create-args: >-
+            --channel ./channel
+            --channel conda-forge
+            python=3.12
+            cli_simple
+            cli_full
+          init-shell: bash
+          generate-run-shell: true
+      - run: cli-simple summarise 1 2 3 4 5
+      - run: cli-full tile-stats 0.5 0.5 1.0 1.0 5.0 5.0 --tile-max-x 2 --tile-max-y 2
+
+  # ---------------------------------------------------------------------------
+  # Aggregate gate — branch protection should require this single check.
+  # ---------------------------------------------------------------------------
+
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [discover, lint, rust-tests, build-conda, channel, test-package, demos]
+    steps:
+      - name: Check upstream jobs
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "true" ]; then
+            echo "One or more upstream jobs failed or were cancelled."
+            exit 1
+          fi
+          echo "All upstream jobs succeeded."

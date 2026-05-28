@@ -1,0 +1,12 @@
+[package]
+name = "geocompute-tiles"
+description = "Tile/bbox containment and nearest-point queries built on geocompute-core."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "geocompute_tiles"
+
+[dependencies]
+geocompute-core = { path = "../geocompute-core" }
