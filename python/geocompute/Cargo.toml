@@ -1,0 +1,15 @@
+[package]
+name = "geocompute"
+description = "PyO3 cdylib exposing geocompute-core + geocompute-tiles to Python."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "geocompute"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+geocompute-core = { path = "../../rust/geocompute-core" }
+geocompute-tiles = { path = "../../rust/geocompute-tiles" }

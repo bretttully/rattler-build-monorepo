@@ -1,0 +1,9 @@
+[package]
+name = "geocompute-core"
+description = "Core geometric primitives (Point, distance)."
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "geocompute_core"
