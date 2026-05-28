@@ -104,11 +104,24 @@ jobs:
           pixi-commit: ${{ env.PIXI_COMMIT }}
           pixi-run-id: ${{ env.PIXI_RUN_ID }}
       - name: Build ${{ matrix.package.name }}
-        run: pixi build --path ${{ matrix.package.path }} --output-dir conda-out
+        run: pixi build --path ${{ matrix.package.path }} --output-dir conda-tmp
+      - name: Sort .conda into channel layout
+        run: |
+          mkdir -p conda-out/noarch conda-out/linux-64
+          for f in conda-tmp/*.conda; do
+            # Noarch builds have a `pyh<hash>` build string (e.g. *-pyh4616a5c_0.conda).
+            # Everything else is platform-specific; this workflow only builds for linux-64.
+            if [[ "$f" == *-pyh*_*.conda ]]; then
+              mv "$f" conda-out/noarch/
+            else
+              mv "$f" conda-out/linux-64/
+            fi
+          done
+          find conda-out -type f
       - uses: actions/upload-artifact@v7
         with:
           name: conda-${{ matrix.package.name }}
-          path: conda-out/**/*.conda
+          path: conda-out
           if-no-files-found: error
           retention-days: 14
 
