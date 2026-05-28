@@ -147,10 +147,10 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           pixi-commit: ${{ env.PIXI_COMMIT }}
           pixi-run-id: ${{ env.PIXI_RUN_ID }}
-      - name: Install rattler-index
-        run: pixi global install rattler-index
       - name: Build channel index
-        run: rattler-index fs ./channel
+        # `pixi exec` runs rattler-index in a one-off conda env without leaving
+        # global state behind (and without needing `~/.pixi/bin` on PATH).
+        run: pixi exec rattler-index fs ./channel
       - name: Show channel layout
         run: find ./channel -type f | head -40
       - uses: actions/upload-artifact@v7
