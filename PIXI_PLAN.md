@@ -183,9 +183,18 @@ Sub-crate `Cargo.toml` files reference cross-workspace pure-Rust crates by relat
 
 ## CI implications
 
-- Single workflow can drive everything: checkout → `prefix-dev/setup-pixi` → `pixi run lint && pixi run test && pixi run test-rust`.
-- Per-package conda artifacts already live under `.pixi/artifacts-v0/<package>/`; shipping them is a matter of plumbing them to a channel (or using `rattler-build` invoked through pixi tasks).
-- Change-detection (e.g. AST-based dep-graph analysis) still belongs upstream of the matrix — `pixi install` solves the whole workspace either way; you want CI to skip building unaffected packages from source.
+The shape demonstrated by `.github/workflows/ci.yml` in this repo:
+
+1. **Discover** source packages from `pixi list --frozen --json | jq` — emits the matrix as a workflow output. Adding/removing a source package updates CI without a workflow edit.
+2. **Build-conda** matrix runs `pixi build --path <pkg>` in parallel, one job per source package; each uploads its `.conda` as a workflow artifact.
+3. **Channel index** job downloads all the per-package artifacts into a flat directory and runs `rattler-index fs ./channel` to write `repodata.json`. The result is a valid conda channel that downstream jobs solve against.
+4. **Test-package** matrix installs **only** that one package from the local channel via `micromamba install` (plus pytest). The conda solver pulls in only the package's transitively-declared deps; the test then runs the package's pytest dir against the installed conda package. A missing run-dep in the recipe gets caught here — the editable-install pattern that `pixi install` uses by default would hide it.
+5. **Demos** job installs the apps from the same channel and runs their CLI entry points. Catches broken `[project.scripts]` wiring that an in-process Typer test runner won't.
+6. **Aggregate gate** (`ci-success`) is the single check branch protection should require.
+
+Source-only jobs (lint, rust-tests) run in parallel with the build pipeline, not gated on it. The `build-conda → channel → (test-package ∥ demos)` shape replaces the naive "everything in parallel, each job re-installs the env from source" pattern that hides recipe-level dep declaration bugs.
+
+Change-detection (e.g. AST-based dep-graph analysis) still belongs upstream of the matrix — the matrix here builds every source package every time. In a real monorepo with many packages, prune the matrix to changed packages + their transitive dependents before fanning out.
 
 ## Gotchas encountered
 
